@@ -1,7 +1,7 @@
-smartapi-python
+logzero==1.7.0
+smartapi-python==1.5.5
 websocket-client
 pyotp
 pandas
-ta
 requests
-logzero==1.7.0
+ta
