@@ -13,7 +13,7 @@ from ta.trend import MACD, EMAIndicator, ADXIndicator
 from ta.volume import VolumeWeightedAveragePrice
 
 # -------- TELEGRAM -------- #
-BOT_TOKEN = "YOUR_NEW_TOKEN"
+BOT_TOKEN = "8261206773:AAHZuexLEn6g-fne6fLPI2PSceAlUsuX-eg"
 CHAT_ID = "8565808280"
 
 def send(msg):
