@@ -4,4 +4,4 @@ pyotp
 pandas
 ta
 requests
-logzero
+logzero==1.7.0
