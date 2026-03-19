@@ -4,40 +4,33 @@ import pyotp
 from datetime import datetime
 from collections import deque
 import pandas as pd
+
 from SmartApi import SmartConnect
+from SmartApi.smartWebSocketV2 import SmartWebSocketV2
+
 from ta.momentum import RSIIndicator
 from ta.trend import MACD, EMAIndicator, ADXIndicator
 from ta.volume import VolumeWeightedAveragePrice
 
 # -------- TELEGRAM -------- #
-BOT_TOKEN = "8261206773:AAHZuexLEn6g-fne6fLPI2PSceAlUsuX-eg"
+BOT_TOKEN = "YOUR_NEW_TOKEN"
 CHAT_ID = "8565808280"
 
-def send(msg, buttons=None):
+def send(msg):
     url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage"
-    data = {"chat_id": CHAT_ID, "text": msg, "parse_mode": "Markdown"}
-    if buttons:
-        data["reply_markup"] = buttons
-    requests.post(url, json=data)
-
-# -------- INLINE BUTTON -------- #
-def buttons(symbol):
-    return {
-        "inline_keyboard": [
-            [{"text": "📊 Last 15 Min", "callback_data": f"last15_{symbol}"}],
-            [{"text": "📈 Indicators", "callback_data": f"ind_{symbol}"}]
-        ]
-    }
+    requests.post(url, json={"chat_id": CHAT_ID, "text": msg})
 
 # -------- LOGIN -------- #
 API_KEY = "API_KEY"
 CLIENT_ID = "CLIENT_ID"
 PASSWORD = "PASSWORD"
-TOTP_SECRET = "TOTP"
+TOTP = pyotp.TOTP("TOTP_SECRET").now()
 
-totp = pyotp.TOTP(TOTP_SECRET).now()
-smartApi = SmartConnect(API_KEY)
-smartApi.generateSession(CLIENT_ID, PASSWORD, totp)
+obj = SmartConnect(API_KEY)
+session = obj.generateSession(CLIENT_ID, PASSWORD, TOTP)
+
+AUTH_TOKEN = session["data"]["jwtToken"]
+FEED_TOKEN = obj.getfeedToken()
 
 # -------- STOCKS -------- #
 stocks = {
@@ -51,78 +44,139 @@ stocks = {
     "RPOWER": "2885"
 }
 
-prev = {}
-history = {s: deque(maxlen=300) for s in stocks}  # 15 min data
-
+# -------- DATA STORAGE -------- #
+tick_data = {s: deque(maxlen=300) for s in stocks}
+prev_data = {}
 last_signal = {}
 
-# -------- LOOP -------- #
+# -------- TELEGRAM BUTTON -------- #
+def build_message(symbol, data, indicators):
+
+    return f"""
+📊 {symbol}
+
+💰 LTP: {data['ltp']}
+📈 Buy: {data['buy']}
+📉 Sell: {data['sell']}
+
+🔄 Buy%: {data['buy_pct']:.2f}%
+🔄 Sell%: {data['sell_pct']:.2f}%
+
+📊 Indicators:
+RSI: {indicators.get('RSI')}
+MACD: {indicators.get('MACD')}
+EMA: {indicators.get('EMA')}
+ADX: {indicators.get('ADX')}
+"""
+
+# -------- INDICATORS -------- #
+def get_indicators(symbol):
+    df = pd.DataFrame(tick_data[symbol])
+    if len(df) < 20:
+        return {}
+
+    rsi = RSIIndicator(df["ltp"]).rsi().iloc[-1]
+    macd = MACD(df["ltp"]).macd().iloc[-1]
+    ema = EMAIndicator(df["ltp"]).ema_indicator().iloc[-1]
+    adx = ADXIndicator(df["ltp"], df["ltp"], df["ltp"]).adx().iloc[-1]
+
+    return {
+        "RSI": round(rsi, 2),
+        "MACD": round(macd, 2),
+        "EMA": round(ema, 2),
+        "ADX": round(adx, 2)
+    }
+
+# -------- SIGNAL -------- #
+def get_signal(buy_pct, sell_pct):
+
+    if buy_pct >= 10:
+        return "🟢 BUY SIGNAL"
+    elif buy_pct <= -10:
+        return "🔴 SELL SIGNAL"
+
+    if sell_pct >= 10:
+        return "🔴 SELL PRESSURE"
+    elif sell_pct <= -10:
+        return "🟢 BUY PRESSURE"
+
+    return None
+
+# -------- WEBSOCKET CALLBACK -------- #
+def on_data(ws, message):
+
+    token = message["token"]
+    ltp = message.get("last_traded_price", 0)
+
+    symbol = None
+    for k, v in stocks.items():
+        if v == token:
+            symbol = k
+            break
+
+    if not symbol:
+        return
+
+    buy = message.get("total_buy_quantity", 0)
+    sell = message.get("total_sell_quantity", 0)
+
+    tick_data[symbol].append({
+        "ltp": ltp,
+        "buy": buy,
+        "sell": sell
+    })
+
+# -------- START SOCKET -------- #
+sws = SmartWebSocketV2(AUTH_TOKEN, API_KEY, CLIENT_ID, FEED_TOKEN)
+
+def on_open(ws):
+    sws.subscribe("abc123", 1, list(stocks.values()))
+
+sws.on_open = on_open
+sws.on_data = on_data
+
+sws.connect(threaded=True)
+
+# -------- MAIN LOOP -------- #
 while True:
 
     now = datetime.now().time()
 
-    # Market time control
     if now < datetime.strptime("09:00", "%H:%M").time() or now > datetime.strptime("15:30", "%H:%M").time():
         time.sleep(30)
         continue
 
-    for symbol, token in stocks.items():
+    for symbol in stocks:
 
-        data = smartApi.getMarketData(
-            mode="FULL",
-            exchangeTokens={"NSE": [token]}
-        )
+        data_list = tick_data[symbol]
+        if len(data_list) < 2:
+            continue
 
-        q = data["data"]["fetched"][0]
-        ltp = q["ltp"]
+        last = data_list[-1]
+        prev = data_list[-2]
 
-        depth = q.get("depth", {})
-        buy = sum(x["quantity"] for x in depth.get("buy", []))
-        sell = sum(x["quantity"] for x in depth.get("sell", []))
+        buy_diff = last["buy"] - prev["buy"]
+        sell_diff = last["sell"] - prev["sell"]
 
-        # Store history
-        history[symbol].append({"ltp": ltp, "buy": buy, "sell": sell})
+        buy_pct = (buy_diff / prev["buy"] * 100) if prev["buy"] else 0
+        sell_pct = (sell_diff / prev["sell"] * 100) if prev["sell"] else 0
 
-        prev_buy = prev.get(symbol, {}).get("buy", buy)
-        prev_sell = prev.get(symbol, {}).get("sell", sell)
+        data = {
+            "ltp": last["ltp"],
+            "buy": last["buy"],
+            "sell": last["sell"],
+            "buy_pct": buy_pct,
+            "sell_pct": sell_pct
+        }
 
-        buy_diff = buy - prev_buy
-        sell_diff = sell - prev_sell
+        signal = get_signal(buy_pct, sell_pct)
 
-        buy_pct = (buy_diff / prev_buy * 100) if prev_buy else 0
-        sell_pct = (sell_diff / prev_sell * 100) if prev_sell else 0
-
-        signal = None
-
-        if buy_pct >= 10:
-            signal = "🟢 BUY SIGNAL"
-        elif buy_pct <= -10:
-            signal = "🔴 SELL SIGNAL"
-
-        if sell_pct >= 10:
-            signal = "🔴 SELL PRESSURE"
-        elif sell_pct <= -10:
-            signal = "🟢 BUY PRESSURE"
-
-        # Send alert only when signal changes
         if signal and last_signal.get(symbol) != signal:
 
-            msg = f"""
-📊 *{symbol}*
+            indicators = get_indicators(symbol)
+            msg = build_message(symbol, data, indicators) + f"\n🚨 {signal}"
 
-💰 LTP: ₹{ltp}
-📈 Buy: {buy}
-📉 Sell: {sell}
-
-🔄 Buy%: {buy_pct:.2f}%
-🔄 Sell%: {sell_pct:.2f}%
-
-🚨 {signal}
-"""
-
-            send(msg, buttons(symbol))
+            send(msg)
             last_signal[symbol] = signal
-
-        prev[symbol] = {"buy": buy, "sell": sell}
 
     time.sleep(3)
