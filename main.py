@@ -1,5 +1,6 @@
 import time
 import os 
+import pytz
 import requests
 import pyotp
 from datetime import datetime
@@ -142,11 +143,13 @@ sws.connect(threaded=True)
 # -------- MAIN LOOP -------- #
 while True:
 
-    now = datetime.now().time()
+IST = pytz.timezone("Asia/Kolkata")
+now = datetime.now(IST).time()
 
-    if now < datetime.strptime("09:00", "%H:%M").time() or now > datetime.strptime("15:30", "%H:%M").time():
-        time.sleep(30)
-        continue
+if now < datetime.strptime("09:00", "%H:%M").time() or now > datetime.strptime("15:30", "%H:%M").time():
+    print("⏳ Waiting for market open (IST)...", now)
+    time.sleep(30)
+    continue
 
     for symbol in stocks:
 
