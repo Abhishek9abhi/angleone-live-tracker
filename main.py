@@ -25,7 +25,8 @@ def send(msg):
 API_KEY = "API_KEY"
 CLIENT_ID = "CLIENT_ID"
 PASSWORD = "PASSWORD"
-TOTP_SECRET = os.getenv("TOTP_SECRET") TOTP = pyotp.TOTP(TOTP_SECRET).now()
+TOTP_SECRET = os.getenv("TOTP_SECRET")
+TOTP = pyotp.TOTP(TOTP_SECRET).now()
 
 obj = SmartConnect(API_KEY)
 session = obj.generateSession(CLIENT_ID, PASSWORD, TOTP)
