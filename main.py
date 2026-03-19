@@ -10,8 +10,8 @@ from ta.trend import MACD, EMAIndicator, ADXIndicator
 from ta.volume import VolumeWeightedAveragePrice
 
 # -------- TELEGRAM -------- #
-BOT_TOKEN = "NEW_TOKEN_HERE"
-CHAT_ID = "YOUR_CHAT_ID"
+BOT_TOKEN = "8261206773:AAHZuexLEn6g-fne6fLPI2PSceAlUsuX-eg"
+CHAT_ID = "8565808280"
 
 def send(msg, buttons=None):
     url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage"
